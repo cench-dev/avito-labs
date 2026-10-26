@@ -1,0 +1,22 @@
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - bodyclose
+  exclusions:
+    generated: strict
+
+formatters:
+  enable:
+    - goimports
+  exclusions:
+    generated: strict

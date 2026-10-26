@@ -6,39 +6,18 @@ import (
 	"time"
 
 	"github.com/Masterminds/squirrel"
-	api "github.com/cench-dev/avito-labs/internal/generated"
+	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
+	"github.com/cench-dev/avito-labs/internal/model"
 	"github.com/cench-dev/avito-labs/internal/txmanager"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 type TripRepository struct {
 	pool         *pgxpool.Pool
 	queryTimeout time.Duration
-}
-
-var ErrTripAlreadyCompleted = errors.New("trip already completed")
-
-type CreateTripParams struct {
-	ID             pgtype.UUID
-	UserID         pgtype.UUID
-	DriverID       pgtype.UUID
-	StartLatitude  float64
-	StartLongitude float64
-	EndLatitude    float64
-	EndLongitude   float64
-	Price          int64
-	Status         string
-	StartedAt      time.Time
-}
-
-type CreateTripStatusHistoryParams struct {
-	TripID     pgtype.UUID
-	FromStatus *string
-	ToStatus   string
-	Reason     *string
 }
 
 func NewTripRepository(pool *pgxpool.Pool, queryTimeout time.Duration) *TripRepository {
@@ -48,7 +27,7 @@ func NewTripRepository(pool *pgxpool.Pool, queryTimeout time.Duration) *TripRepo
 	}
 }
 
-func (r *TripRepository) CreateTrip(ctx context.Context, params CreateTripParams) error {
+func (r *TripRepository) CreateTrip(ctx context.Context, params model.Trip) error {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 	builder := squirrel.Insert("trips")
@@ -84,10 +63,21 @@ func (r *TripRepository) CreateTrip(ctx context.Context, params CreateTripParams
 
 	executor := txmanager.ExecutorFromContext(ctx, r.pool)
 	_, err = executor.Exec(ctx, query, args...)
+	if err == nil {
+		return nil
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "trips_limitation_for_driver_idx" {
+		return tripDomain.ErrDriverBusy
+	}
+
 	return err
 }
 
-func (r *TripRepository) GetTrip(ctx context.Context, id pgtype.UUID) (api.Trip, error) {
+func (r *TripRepository) GetTrip(ctx context.Context, id string) (model.Trip, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 	builder := squirrel.Select(
@@ -108,7 +98,7 @@ func (r *TripRepository) GetTrip(ctx context.Context, id pgtype.UUID) (api.Trip,
 	builder = builder.PlaceholderFormat(squirrel.Dollar)
 	query, args, err := builder.ToSql()
 	if err != nil {
-		return api.Trip{}, err
+		return model.Trip{}, err
 	}
 
 	executor := txmanager.ExecutorFromContext(ctx, r.pool)
@@ -144,39 +134,35 @@ func (r *TripRepository) GetTrip(ctx context.Context, id pgtype.UUID) (api.Trip,
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return api.Trip{}, pgx.ErrNoRows
+			return model.Trip{}, tripDomain.ErrNotFound
 		}
-		return api.Trip{}, err
+		return model.Trip{}, err
 	}
 
-	return api.Trip{
-		Id:       openapi_types.UUID(tripID.Bytes),
-		UserId:   openapi_types.UUID(userID.Bytes),
-		DriverId: openapi_types.UUID(driverID.Bytes),
-		StartPoint: api.Coordinates{
-			Latitude:  startLatitude,
-			Longitude: startLongitude,
-		},
-		EndPoint: api.Coordinates{
-			Latitude:  endLatitude,
-			Longitude: endLongitude,
-		},
-		Price:      price,
-		Status:     api.TripStatus(status),
-		StartedAt:  startedAt,
-		FinishedAt: finishedAt,
+	return model.Trip{
+		ID:             tripID.String(),
+		UserID:         userID.String(),
+		DriverID:       driverID.String(),
+		StartLatitude:  startLatitude,
+		StartLongitude: startLongitude,
+		EndLatitude:    endLatitude,
+		EndLongitude:   endLongitude,
+		Price:          price,
+		Status:         status,
+		StartedAt:      startedAt,
+		FinishedAt:     finishedAt,
 	}, nil
 }
 
-func (r *TripRepository) FinishTrip(ctx context.Context, id pgtype.UUID, finishedAt time.Time) error {
+func (r *TripRepository) FinishTrip(ctx context.Context, id string, finishedAt time.Time) error {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 	builder := squirrel.Update("trips")
-	builder = builder.Set("status", "completed")
+	builder = builder.Set("status", string(tripDomain.StatusCompleted))
 	builder = builder.Set("finished_at", finishedAt)
 	builder = builder.Where(squirrel.Eq{
 		"id":     id,
-		"status": "active",
+		"status": string(tripDomain.StatusActive),
 	})
 	builder = builder.PlaceholderFormat(squirrel.Dollar)
 	query, args, err := builder.ToSql()
@@ -204,24 +190,24 @@ func (r *TripRepository) FinishTrip(ctx context.Context, id pgtype.UUID, finishe
 		).Scan(&status)
 
 		if errors.Is(err, pgx.ErrNoRows) {
-			return pgx.ErrNoRows
+			return tripDomain.ErrNotFound
 		}
 
 		if err != nil {
 			return err
 		}
 
-		if status == "completed" {
-			return ErrTripAlreadyCompleted
+		if status == string(tripDomain.StatusCompleted) {
+			return tripDomain.ErrAlreadyCompleted
 		}
 
-		return pgx.ErrNoRows
+		return tripDomain.ErrNotFound
 	}
 
 	return nil
 }
 
-func (r *TripRepository) CreateTripStatusHistory(ctx context.Context, params CreateTripStatusHistoryParams) error {
+func (r *TripRepository) CreateTripStatusHistory(ctx context.Context, params model.TripStatusHistory) error {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 	builder := squirrel.Insert("trip_status_history")

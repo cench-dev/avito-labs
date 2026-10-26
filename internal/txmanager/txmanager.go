@@ -45,7 +45,10 @@ func (tm *txManager) Do(ctx context.Context, fn func(ctx context.Context) error)
 		return err
 	}
 
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
 	ctx = context.WithValue(ctx, txKey{}, tx)
 
 	if fn != nil {

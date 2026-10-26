@@ -7,7 +7,10 @@ run:
 	@set -a; . ./.env; set +a; go run ./cmd/trip-service
 
 test:
-	@go test -race ./...
+	@go test -race -cover ./...
+
+test-integration:
+	@set -a; . ./.env; set +a; go test -race -tags=integration ./internal/txmanager/...
 
 lint:
 	@echo "lint: not implemented yet"
