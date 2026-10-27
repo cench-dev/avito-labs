@@ -5,12 +5,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
 	api "github.com/cench-dev/avito-labs/internal/generated"
 	"github.com/cench-dev/avito-labs/internal/http/domainerror"
 	tripConverter "github.com/cench-dev/avito-labs/internal/http/trip"
 	"github.com/cench-dev/avito-labs/internal/model"
-	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -21,7 +22,7 @@ func NewHandler(useCase TripCreator) *Handler {
 	return &Handler{useCase: useCase}
 }
 
-func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, params api.CreateTripParams) {
+func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	var data api.TripData
 
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cench-dev/avito-labs/internal/model"
+	"github.com/cench-dev/avito-labs/internal/observability"
 )
 
 type UseCase struct {
@@ -36,5 +37,10 @@ func (uc *UseCase) Create(ctx context.Context, trip model.Trip) error {
 		return nil
 	})
 
-	return res
+	if res != nil {
+		return res
+	}
+
+	observability.RecordTripCreated(ctx)
+	return nil
 }

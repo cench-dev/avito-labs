@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/Masterminds/squirrel"
-	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
-	"github.com/cench-dev/avito-labs/internal/model"
-	"github.com/cench-dev/avito-labs/internal/txmanager"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
+	"github.com/cench-dev/avito-labs/internal/model"
+	"github.com/cench-dev/avito-labs/internal/txmanager"
 )
 
 type TripRepository struct {
@@ -131,7 +132,6 @@ func (r *TripRepository) GetTrip(ctx context.Context, id string) (model.Trip, er
 		&startedAt,
 		&finishedAt,
 	)
-
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return model.Trip{}, tripDomain.ErrNotFound
@@ -166,14 +166,12 @@ func (r *TripRepository) FinishTrip(ctx context.Context, id string, finishedAt t
 	})
 	builder = builder.PlaceholderFormat(squirrel.Dollar)
 	query, args, err := builder.ToSql()
-
 	if err != nil {
 		return err
 	}
 
 	executor := txmanager.ExecutorFromContext(ctx, r.pool)
 	result, err := executor.Exec(ctx, query, args...)
-
 	if err != nil {
 		return err
 	}

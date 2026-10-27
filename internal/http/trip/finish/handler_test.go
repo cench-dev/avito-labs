@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
-	api "github.com/cench-dev/avito-labs/internal/generated"
-	"github.com/cench-dev/avito-labs/internal/model"
 	"github.com/google/uuid"
+
+	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
+	"github.com/cench-dev/avito-labs/internal/model"
 )
 
 type tripFinisherMock struct {
@@ -136,7 +136,7 @@ func TestHandler_Handle(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/trips/"+tripID.String()+"/finish", nil)
 			rec := httptest.NewRecorder()
 
-			handler.Handle(rec, req, api.TripId(tripID))
+			handler.Handle(rec, req, tripID)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body.String())

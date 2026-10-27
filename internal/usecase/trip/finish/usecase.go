@@ -6,6 +6,7 @@ import (
 
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
 	"github.com/cench-dev/avito-labs/internal/model"
+	"github.com/cench-dev/avito-labs/internal/observability"
 )
 
 type UseCase struct {
@@ -42,5 +43,10 @@ func (uc *UseCase) Finish(ctx context.Context, tripID string, finishedAt time.Ti
 		return nil
 	})
 
-	return res
+	if res != nil {
+		return res
+	}
+
+	observability.RecordTripCompleted(ctx)
+	return nil
 }

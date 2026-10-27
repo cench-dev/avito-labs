@@ -7,7 +7,6 @@ import (
 	api "github.com/cench-dev/avito-labs/internal/generated"
 	"github.com/cench-dev/avito-labs/internal/http/domainerror"
 	tripConverter "github.com/cench-dev/avito-labs/internal/http/trip"
-	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -19,7 +18,7 @@ func NewHandler(useCase TripGetter) *Handler {
 }
 
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
-	id := uuid.UUID(tripId).String()
+	id := tripId.String()
 
 	trip, err := h.useCase.Get(r.Context(), id)
 	if err != nil {

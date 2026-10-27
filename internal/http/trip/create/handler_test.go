@@ -10,10 +10,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
 	api "github.com/cench-dev/avito-labs/internal/generated"
 	"github.com/cench-dev/avito-labs/internal/model"
-	"github.com/google/uuid"
 )
 
 type tripCreatorMock struct {
@@ -95,7 +96,7 @@ func TestHandler_Handle(t *testing.T) {
 				bytes.NewBufferString(tt.body),
 			)
 
-			handler.Handle(rec, req, api.CreateTripParams{})
+			handler.Handle(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("got status %d, want %d", rec.Code, tt.wantStatus)

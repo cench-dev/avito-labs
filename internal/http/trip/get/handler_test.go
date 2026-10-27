@@ -10,10 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
 	api "github.com/cench-dev/avito-labs/internal/generated"
 	"github.com/cench-dev/avito-labs/internal/model"
-	"github.com/google/uuid"
 )
 
 type tripGetterMock struct {
@@ -80,7 +81,7 @@ func TestHandler_Handle(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/trips/"+tripID.String(), nil)
 
-			handler.Handle(rec, req, api.TripId(tripID))
+			handler.Handle(rec, req, tripID)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("got status %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body.String())

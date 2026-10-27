@@ -3,6 +3,7 @@ package domainerror
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
@@ -26,15 +27,17 @@ func Write(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func WriteProblem(w http.ResponseWriter, r *http.Request, status int,
-	code string, title string, detail string) {
+	code, title, detail string,
+) {
 	writeProblem(w, r, status, code, title, detail)
 }
 
-func writeProblem(w http.ResponseWriter, r *http.Request, status int,
-	code string, title string, detail string) {
+func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-
+	if status < 0 || int64(status) > math.MaxInt32 {
+		status = http.StatusInternalServerError
+	}
 	problem := api.Problem{
 		Code:     code,
 		Status:   int32(status),

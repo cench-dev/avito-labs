@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -12,6 +12,7 @@ import (
 	tripFinish "github.com/cench-dev/avito-labs/internal/http/trip/finish"
 	tripGet "github.com/cench-dev/avito-labs/internal/http/trip/get"
 	"github.com/cench-dev/avito-labs/internal/httpserver"
+	"github.com/cench-dev/avito-labs/internal/observability"
 	"github.com/cench-dev/avito-labs/internal/postgres"
 	"github.com/cench-dev/avito-labs/internal/repository"
 	"github.com/cench-dev/avito-labs/internal/txmanager"
@@ -23,12 +24,45 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Println(err)
+		slog.Error("failed to load config", "error", err)
 		return
 	}
-	pool, err := postgres.CreatePool(context.Background(), cfg.DatabaseURL, cfg.DatabaseMaxConns, cfg.DatabaseMinConns, cfg.DatabaseConnectTimeout, cfg.DatabaseMaxConnLifetime)
+
+	logger, err := observability.NewLogger(cfg.LogLevel)
 	if err != nil {
-		fmt.Println(err)
+		slog.Error("failed to initialize logger", "error", err)
+		return
+	}
+
+	logger.Info("starting service", "service", "trip-service")
+	otel, err := observability.InitOTel(context.Background(), observability.OTelConfig{
+		Endpoint: cfg.OTLPEndpoint,
+		Protocol: cfg.OTLPProtocol,
+		Sampler:  cfg.TracesSampler,
+	})
+	if err != nil {
+		logger.Error("failed to initialize OpenTelemetry", "error", err)
+		return
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := otel.Shutdown(ctx); err != nil {
+			logger.Error("failed to shutdown OpenTelemetry", "error", err)
+		}
+	}()
+
+	pool, err := postgres.CreatePool(
+		context.Background(),
+		cfg.DatabaseURL,
+		cfg.DatabaseMaxConns,
+		cfg.DatabaseMinConns,
+		cfg.DatabaseConnectTimeout,
+		cfg.DatabaseMaxConnLifetime,
+	)
+	if err != nil {
+		logger.Error("failed to create postgres pool", "error", err)
 		return
 	}
 
@@ -43,16 +77,16 @@ func main() {
 	finishTripHandler := tripFinish.NewHandler(finishTripUseCase, getTripUseCase)
 	server := httpserver.NewServer(cfg.HTTPAddr, cfg.ShutdownTimeout, 10*time.Second,
 		10*time.Second, 10*time.Second, 10*time.Second,
-		pool, createTripHandler, getTripHandler, finishTripHandler)
+		pool, createTripHandler, getTripHandler, finishTripHandler, logger)
 
 	go func() {
 		err := server.Start()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			fmt.Println("http server:", err)
+			logger.Error("http server failed", "error", err)
 		}
 	}()
 
 	if err := server.WaitForShutdown(); err != nil {
-		fmt.Println("shutdown:", err)
+		logger.Error("shutdown failed", "error", err)
 	}
 }

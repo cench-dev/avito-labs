@@ -13,7 +13,7 @@ test-integration:
 	@set -a; . ./.env; set +a; go test -race -tags=integration ./internal/txmanager/...
 
 lint:
-	@echo "lint: not implemented yet"
+	@golangci-lint run ./...
 
 generate:
 	@go tool oapi-codegen \

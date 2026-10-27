@@ -5,8 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cench-dev/avito-labs/internal/model"
 	"go.uber.org/mock/gomock"
+
+	"github.com/cench-dev/avito-labs/internal/model"
 )
 
 func TestUseCase_Get(t *testing.T) {

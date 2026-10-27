@@ -40,7 +40,6 @@ func (tm *txManager) Do(ctx context.Context, fn func(ctx context.Context) error)
 	tx, err := tm.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel: pgx.ReadCommitted,
 	})
-
 	if err != nil {
 		return err
 	}
