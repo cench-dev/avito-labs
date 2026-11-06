@@ -5,6 +5,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/cench-dev/avito-labs/internal/config"
@@ -66,7 +69,6 @@ func main() {
 		return
 	}
 
-	defer pool.Close()
 	tripRepository := repository.NewTripRepository(pool, cfg.DatabaseQueryTimeout)
 	txManager := txmanager.NewTxManager(pool)
 	createTripUseCase := create.NewUseCase(tripRepository, txManager)
@@ -86,7 +88,28 @@ func main() {
 		}
 	}()
 
-	if err := server.WaitForShutdown(); err != nil {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	<-sigs
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("shutdown failed", "error", err)
+	}
+
+	poolClosed := make(chan struct{})
+
+	go func() {
+		pool.Close()
+		close(poolClosed)
+	}()
+
+	select {
+	case <-poolClosed:
+	case <-ctx.Done():
+		logger.Error("database pool close timeout", "error", ctx.Err())
 	}
 }

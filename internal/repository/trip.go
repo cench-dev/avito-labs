@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -44,10 +46,28 @@ func (r *TripRepository) CreateTrip(ctx context.Context, params model.Trip) erro
 		"status",
 		"started_at",
 	)
+	idParsed, err := uuid.Parse(params.ID)
+	if err != nil {
+		return err
+	}
+
+	userIDParsed, err := uuid.Parse(params.UserID)
+	if err != nil {
+		return err
+	}
+
+	driverIDParsed, err := uuid.Parse(params.DriverID)
+	if err != nil {
+		return err
+	}
+
+	id := pgtype.UUID{Bytes: idParsed, Valid: true}
+	userID := pgtype.UUID{Bytes: userIDParsed, Valid: true}
+	driverID := pgtype.UUID{Bytes: driverIDParsed, Valid: true}
 	builder = builder.Values(
-		params.ID,
-		params.UserID,
-		params.DriverID,
+		id,
+		userID,
+		driverID,
 		params.StartLatitude,
 		params.StartLongitude,
 		params.EndLatitude,
@@ -79,6 +99,11 @@ func (r *TripRepository) CreateTrip(ctx context.Context, params model.Trip) erro
 }
 
 func (r *TripRepository) GetTrip(ctx context.Context, id string) (model.Trip, error) {
+	parsedID, err := uuid.Parse(id)
+	if err != nil {
+		return model.Trip{}, err
+	}
+	dbID := pgtype.UUID{Bytes: parsedID, Valid: true}
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 	builder := squirrel.Select(
@@ -95,7 +120,7 @@ func (r *TripRepository) GetTrip(ctx context.Context, id string) (model.Trip, er
 		"finished_at",
 	).From("trips")
 
-	builder = builder.Where(squirrel.Eq{"id": id})
+	builder = builder.Where(squirrel.Eq{"id": dbID})
 	builder = builder.PlaceholderFormat(squirrel.Dollar)
 	query, args, err := builder.ToSql()
 	if err != nil {
@@ -155,13 +180,18 @@ func (r *TripRepository) GetTrip(ctx context.Context, id string) (model.Trip, er
 }
 
 func (r *TripRepository) FinishTrip(ctx context.Context, id string, finishedAt time.Time) error {
+	parsedID, err := uuid.Parse(id)
+	if err != nil {
+		return err
+	}
+	dbID := pgtype.UUID{Bytes: parsedID, Valid: true}
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 	builder := squirrel.Update("trips")
 	builder = builder.Set("status", string(tripDomain.StatusCompleted))
 	builder = builder.Set("finished_at", finishedAt)
 	builder = builder.Where(squirrel.Eq{
-		"id":     id,
+		"id":     dbID,
 		"status": string(tripDomain.StatusActive),
 	})
 	builder = builder.PlaceholderFormat(squirrel.Dollar)
@@ -184,7 +214,7 @@ func (r *TripRepository) FinishTrip(ctx context.Context, id string, finishedAt t
 		err := executor.QueryRow(
 			ctx,
 			"SELECT status FROM trips WHERE id = $1",
-			id,
+			dbID,
 		).Scan(&status)
 
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -206,6 +236,12 @@ func (r *TripRepository) FinishTrip(ctx context.Context, id string, finishedAt t
 }
 
 func (r *TripRepository) CreateTripStatusHistory(ctx context.Context, params model.TripStatusHistory) error {
+	parsedID, err := uuid.Parse(params.TripID)
+	if err != nil {
+		return err
+	}
+
+	tripID := pgtype.UUID{Bytes: parsedID, Valid: true}
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 	builder := squirrel.Insert("trip_status_history")
@@ -216,7 +252,7 @@ func (r *TripRepository) CreateTripStatusHistory(ctx context.Context, params mod
 		"reason",
 	)
 	builder = builder.Values(
-		params.TripID,
+		tripID,
 		params.FromStatus,
 		params.ToStatus,
 		params.Reason,

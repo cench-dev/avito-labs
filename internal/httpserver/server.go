@@ -3,11 +3,9 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -91,19 +89,16 @@ func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
 }
 
-func (s *Server) Shutdown() error {
-	ctx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
-	defer cancel()
-	return s.httpServer.Shutdown(ctx)
-}
-
-func (s *Server) WaitForShutdown() error {
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigs)
-
-	<-sigs
-	return s.Shutdown()
+func (s *Server) Shutdown(ctx context.Context) error {
+	err := s.httpServer.Shutdown(ctx)
+	if err != nil {
+		closeErr := s.httpServer.Close()
+		if closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
