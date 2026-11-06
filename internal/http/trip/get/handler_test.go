@@ -11,19 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
 	api "github.com/cench-dev/avito-labs/internal/generated"
 	"github.com/cench-dev/avito-labs/internal/model"
 )
-
-type tripGetterMock struct {
-	getFunc func(context.Context, string) (model.Trip, error)
-}
-
-func (m *tripGetterMock) Get(ctx context.Context, tripID string) (model.Trip, error) {
-	return m.getFunc(ctx, tripID)
-}
 
 func TestHandler_Handle(t *testing.T) {
 	tripID := uuid.New()
@@ -56,7 +49,7 @@ func TestHandler_Handle(t *testing.T) {
 			name:       "trip not found",
 			getErr:     tripDomain.ErrNotFound,
 			wantStatus: http.StatusNotFound,
-			wantCode:   "not_found",
+			wantCode:   "trip_not_found",
 		},
 		{
 			name:       "internal error",
@@ -68,23 +61,39 @@ func TestHandler_Handle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &tripGetterMock{
-				getFunc: func(_ context.Context, id string) (model.Trip, error) {
+			ctrl := gomock.NewController(t)
+			mock := NewMockTripGetter(ctrl)
+
+			mock.EXPECT().
+				Get(gomock.Any(), tripID.String()).
+				DoAndReturn(func(
+					_ context.Context,
+					id string,
+				) (model.Trip, error) {
 					if id != tripID.String() {
 						t.Errorf("got trip ID %q, want %q", id, tripID.String())
 					}
 					return tt.trip, tt.getErr
-				},
-			}
+				}).
+				Times(1)
 
 			handler := NewHandler(mock)
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/trips/"+tripID.String(), nil)
+			req := httptest.NewRequest(
+				http.MethodGet,
+				"/api/v1/trips/"+tripID.String(),
+				nil,
+			)
 
 			handler.Handle(rec, req, tripID)
 
 			if rec.Code != tt.wantStatus {
-				t.Fatalf("got status %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body.String())
+				t.Fatalf(
+					"got status %d, want %d; body: %s",
+					rec.Code,
+					tt.wantStatus,
+					rec.Body.String(),
+				)
 			}
 
 			if tt.wantCode != "" {
@@ -98,12 +107,19 @@ func TestHandler_Handle(t *testing.T) {
 			}
 
 			if tt.name == "success" {
-				if !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
-					t.Errorf("unexpected Content-Type: %q", rec.Header().Get("Content-Type"))
+				if !strings.HasPrefix(
+					rec.Header().Get("Content-Type"),
+					"application/json",
+				) {
+					t.Errorf(
+						"unexpected Content-Type: %q",
+						rec.Header().Get("Content-Type"),
+					)
 				}
 			}
 
-			if tt.name == "internal error" && strings.Contains(rec.Body.String(), "secret database details") {
+			if tt.name == "internal error" &&
+				strings.Contains(rec.Body.String(), "secret database details") {
 				t.Error("response leaked internal error details")
 			}
 		})

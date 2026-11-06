@@ -15,4 +15,8 @@ type tripRepository interface {
 	CreateTripStatusHistory(ctx context.Context, params model.TripStatusHistory) error
 }
 
+type businessMetrics interface {
+	RecordTripCreated(ctx context.Context)
+}
+
 //go:generate go run go.uber.org/mock/mockgen -source=contract.go -destination=mocks_test.go -package=create

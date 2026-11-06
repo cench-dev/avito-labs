@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cench-dev/avito-labs/internal/http/domainerror"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -40,6 +41,7 @@ func NewServer(
 	createTripHandler *tripCreate.Handler,
 	getTripHandler *tripGet.Handler,
 	finishTripHandler *tripFinish.Handler,
+	requestMetrics RequestMetricsRecorder,
 	logger *slog.Logger,
 ) *Server {
 	r := chi.NewRouter()
@@ -61,7 +63,7 @@ func NewServer(
 		}), "http.request")
 	})
 	r.Use(RequestLogging(logger))
-	r.Use(RequestMetrics)
+	r.Use(RequestMetrics(requestMetrics))
 
 	server := &Server{
 		shutdownTimeout:   shutdownTimeout,
@@ -80,7 +82,19 @@ func NewServer(
 		IdleTimeout:       idleTimeout,
 	}
 
-	api.HandlerFromMux(server, r)
+	api.HandlerWithOptions(server, api.ChiServerOptions{
+		BaseRouter: r,
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			domainerror.WriteProblem(
+				w,
+				r,
+				http.StatusBadRequest,
+				"invalid_request",
+				"Bad Request",
+				"invalid request",
+			)
+		},
+	})
 
 	return server
 }

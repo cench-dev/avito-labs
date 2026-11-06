@@ -3,7 +3,6 @@ package domainerror
 import (
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
@@ -13,10 +12,10 @@ import (
 func Write(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, tripDomain.ErrNotFound):
-		writeProblem(w, r, http.StatusNotFound, "not_found", "Not Found", "trip not found")
+		writeProblem(w, r, http.StatusNotFound, "trip_not_found", "Not Found", "trip not found")
 
 	case errors.Is(err, tripDomain.ErrAlreadyCompleted):
-		writeProblem(w, r, http.StatusConflict, "trip_already_completed", "Conflict", "trip is already completed")
+		writeProblem(w, r, http.StatusConflict, "trip_completed", "Conflict", "trip already completed")
 
 	case errors.Is(err, tripDomain.ErrDriverBusy):
 		writeProblem(w, r, http.StatusConflict, "driver_busy", "Conflict", "driver already has an active trip")
@@ -33,11 +32,13 @@ func WriteProblem(w http.ResponseWriter, r *http.Request, status int,
 }
 
 func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(status)
-	if status < 0 || int64(status) > math.MaxInt32 {
+	if status < 100 || status > 599 {
 		status = http.StatusInternalServerError
 	}
+
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+
 	problem := api.Problem{
 		Code:     code,
 		Status:   int32(status),

@@ -18,9 +18,7 @@ func TestUseCase_Create(t *testing.T) {
 		txErr            error
 		wantErr          error
 	}{
-		{
-			name: "success",
-		},
+		{name: "success"},
 		{
 			name:          "repository error",
 			repoCreateErr: errors.New("insert trip failed"),
@@ -43,6 +41,7 @@ func TestUseCase_Create(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			repo := NewMocktripRepository(ctrl)
 			tx := NewMocktxManager(ctrl)
+			metrics := NewMockbusinessMetrics(ctrl)
 
 			trip := model.Trip{
 				ID:     "trip-1",
@@ -58,20 +57,29 @@ func TestUseCase_Create(t *testing.T) {
 					return fn(ctx)
 				})
 
-			if tt.repoCreateErr != nil || tt.name == "success" ||
-				tt.historyCreateErr != nil {
+			if tt.txErr == nil {
 				repo.EXPECT().
 					CreateTrip(gomock.Any(), trip).
 					Return(tt.repoCreateErr)
+
+				if tt.repoCreateErr == nil {
+					repo.EXPECT().
+						CreateTripStatusHistory(gomock.Any(), gomock.Any()).
+						Return(tt.historyCreateErr)
+				}
 			}
 
-			if tt.repoCreateErr == nil && tt.txErr == nil {
-				repo.EXPECT().
-					CreateTripStatusHistory(gomock.Any(), gomock.Any()).
-					Return(tt.historyCreateErr)
+			if tt.wantErr == nil {
+				metrics.EXPECT().
+					RecordTripCreated(gomock.Any()).
+					Times(1)
+			} else {
+				metrics.EXPECT().
+					RecordTripCreated(gomock.Any()).
+					Times(0)
 			}
 
-			err := NewUseCase(repo, tx).Create(context.Background(), trip)
+			err := NewUseCase(repo, tx, metrics).Create(context.Background(), trip)
 
 			if tt.wantErr == nil && err != nil {
 				t.Fatalf("Create() error = %v, want nil", err)

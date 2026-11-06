@@ -70,6 +70,21 @@ func (mr *MocktripRepositoryMockRecorder) FinishTrip(ctx, tripID, finishedAt any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinishTrip", reflect.TypeOf((*MocktripRepository)(nil).FinishTrip), ctx, tripID, finishedAt)
 }
 
+// GetTrip mocks base method.
+func (m *MocktripRepository) GetTrip(ctx context.Context, id string) (model.Trip, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTrip", ctx, id)
+	ret0, _ := ret[0].(model.Trip)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTrip indicates an expected call of GetTrip.
+func (mr *MocktripRepositoryMockRecorder) GetTrip(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTrip", reflect.TypeOf((*MocktripRepository)(nil).GetTrip), ctx, id)
+}
+
 // MocktxManager is a mock of txManager interface.
 type MocktxManager struct {
 	ctrl     *gomock.Controller
@@ -106,4 +121,40 @@ func (m *MocktxManager) Do(ctx context.Context, fn func(context.Context) error) 
 func (mr *MocktxManagerMockRecorder) Do(ctx, fn any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Do", reflect.TypeOf((*MocktxManager)(nil).Do), ctx, fn)
+}
+
+// MockbusinessMetrics is a mock of businessMetrics interface.
+type MockbusinessMetrics struct {
+	ctrl     *gomock.Controller
+	recorder *MockbusinessMetricsMockRecorder
+	isgomock struct{}
+}
+
+// MockbusinessMetricsMockRecorder is the mock recorder for MockbusinessMetrics.
+type MockbusinessMetricsMockRecorder struct {
+	mock *MockbusinessMetrics
+}
+
+// NewMockbusinessMetrics creates a new mock instance.
+func NewMockbusinessMetrics(ctrl *gomock.Controller) *MockbusinessMetrics {
+	mock := &MockbusinessMetrics{ctrl: ctrl}
+	mock.recorder = &MockbusinessMetricsMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockbusinessMetrics) EXPECT() *MockbusinessMetricsMockRecorder {
+	return m.recorder
+}
+
+// RecordTripCompleted mocks base method.
+func (m *MockbusinessMetrics) RecordTripCompleted(ctx context.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "RecordTripCompleted", ctx)
+}
+
+// RecordTripCompleted indicates an expected call of RecordTripCompleted.
+func (mr *MockbusinessMetricsMockRecorder) RecordTripCompleted(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordTripCompleted", reflect.TypeOf((*MockbusinessMetrics)(nil).RecordTripCompleted), ctx)
 }

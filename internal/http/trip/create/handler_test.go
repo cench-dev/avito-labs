@@ -2,7 +2,6 @@ package create
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,19 +10,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
 	api "github.com/cench-dev/avito-labs/internal/generated"
-	"github.com/cench-dev/avito-labs/internal/model"
 )
-
-type tripCreatorMock struct {
-	createFunc func(context.Context, model.Trip) error
-}
-
-func (m *tripCreatorMock) Create(ctx context.Context, trip model.Trip) error {
-	return m.createFunc(ctx, trip)
-}
 
 func TestHandler_Handle(t *testing.T) {
 	userID := uuid.New()
@@ -52,11 +43,13 @@ func TestHandler_Handle(t *testing.T) {
 		createErr  error
 		wantStatus int
 		wantCode   string
+		wantCreate bool
 	}{
 		{
 			name:       "success",
 			body:       string(validBody),
 			wantStatus: http.StatusCreated,
+			wantCreate: true,
 		},
 		{
 			name:       "invalid JSON",
@@ -70,6 +63,7 @@ func TestHandler_Handle(t *testing.T) {
 			createErr:  tripDomain.ErrDriverBusy,
 			wantStatus: http.StatusConflict,
 			wantCode:   "driver_busy",
+			wantCreate: true,
 		},
 		{
 			name:       "internal error hides details",
@@ -77,16 +71,22 @@ func TestHandler_Handle(t *testing.T) {
 			createErr:  errors.New("secret database details"),
 			wantStatus: http.StatusInternalServerError,
 			wantCode:   "internal_error",
+			wantCreate: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &tripCreatorMock{
-				createFunc: func(context.Context, model.Trip) error {
-					return tt.createErr
-				},
+			ctrl := gomock.NewController(t)
+			mock := NewMockTripCreator(ctrl)
+
+			if tt.wantCreate {
+				mock.EXPECT().
+					Create(gomock.Any(), gomock.Any()).
+					Return(tt.createErr).
+					Times(1)
 			}
+
 			handler := NewHandler(mock)
 
 			rec := httptest.NewRecorder()

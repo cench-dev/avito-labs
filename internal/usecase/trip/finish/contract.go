@@ -8,12 +8,17 @@ import (
 )
 
 type tripRepository interface {
+	GetTrip(ctx context.Context, id string) (model.Trip, error)
 	FinishTrip(ctx context.Context, tripID string, finishedAt time.Time) error
 	CreateTripStatusHistory(ctx context.Context, history model.TripStatusHistory) error
 }
 
 type txManager interface {
 	Do(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+type businessMetrics interface {
+	RecordTripCompleted(ctx context.Context)
 }
 
 //go:generate go run go.uber.org/mock/mockgen -source=contract.go -destination=mocks_test.go -package=finish

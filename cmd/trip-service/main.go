@@ -38,6 +38,7 @@ func main() {
 	}
 
 	logger.Info("starting service", "service", "trip-service")
+
 	otel, err := observability.InitOTel(context.Background(), observability.OTelConfig{
 		Endpoint: cfg.OTLPEndpoint,
 		Protocol: cfg.OTLPProtocol,
@@ -47,6 +48,7 @@ func main() {
 		logger.Error("failed to initialize OpenTelemetry", "error", err)
 		return
 	}
+
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -55,6 +57,18 @@ func main() {
 			logger.Error("failed to shutdown OpenTelemetry", "error", err)
 		}
 	}()
+
+	businessMetrics, err := observability.NewBusinessMetrics(otel.MeterProvider)
+	if err != nil {
+		logger.Error("failed to create business metrics", "error", err)
+		return
+	}
+
+	httpMetrics, err := observability.NewHTTPMetrics(otel.MeterProvider)
+	if err != nil {
+		logger.Error("failed to create HTTP metrics", "error", err)
+		return
+	}
 
 	pool, err := postgres.CreatePool(
 		context.Background(),
@@ -71,15 +85,29 @@ func main() {
 
 	tripRepository := repository.NewTripRepository(pool, cfg.DatabaseQueryTimeout)
 	txManager := txmanager.NewTxManager(pool)
-	createTripUseCase := create.NewUseCase(tripRepository, txManager)
+
+	createTripUseCase := create.NewUseCase(tripRepository, txManager, businessMetrics)
 	getTripUseCase := get.NewUseCase(tripRepository)
-	finishTripUseCase := finish.NewUseCase(tripRepository, txManager)
+	finishTripUseCase := finish.NewUseCase(tripRepository, txManager, businessMetrics)
+
 	createTripHandler := tripCreate.NewHandler(createTripUseCase)
 	getTripHandler := tripGet.NewHandler(getTripUseCase)
 	finishTripHandler := tripFinish.NewHandler(finishTripUseCase, getTripUseCase)
-	server := httpserver.NewServer(cfg.HTTPAddr, cfg.ShutdownTimeout, 10*time.Second,
-		10*time.Second, 10*time.Second, 10*time.Second,
-		pool, createTripHandler, getTripHandler, finishTripHandler, logger)
+
+	server := httpserver.NewServer(
+		cfg.HTTPAddr,
+		cfg.ShutdownTimeout,
+		10*time.Second,
+		10*time.Second,
+		10*time.Second,
+		10*time.Second,
+		pool,
+		createTripHandler,
+		getTripHandler,
+		finishTripHandler,
+		httpMetrics,
+		logger,
+	)
 
 	go func() {
 		err := server.Start()

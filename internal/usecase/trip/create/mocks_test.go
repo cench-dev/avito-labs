@@ -106,3 +106,39 @@ func (mr *MocktripRepositoryMockRecorder) CreateTripStatusHistory(ctx, params an
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTripStatusHistory", reflect.TypeOf((*MocktripRepository)(nil).CreateTripStatusHistory), ctx, params)
 }
+
+// MockbusinessMetrics is a mock of businessMetrics interface.
+type MockbusinessMetrics struct {
+	ctrl     *gomock.Controller
+	recorder *MockbusinessMetricsMockRecorder
+	isgomock struct{}
+}
+
+// MockbusinessMetricsMockRecorder is the mock recorder for MockbusinessMetrics.
+type MockbusinessMetricsMockRecorder struct {
+	mock *MockbusinessMetrics
+}
+
+// NewMockbusinessMetrics creates a new mock instance.
+func NewMockbusinessMetrics(ctrl *gomock.Controller) *MockbusinessMetrics {
+	mock := &MockbusinessMetrics{ctrl: ctrl}
+	mock.recorder = &MockbusinessMetricsMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockbusinessMetrics) EXPECT() *MockbusinessMetricsMockRecorder {
+	return m.recorder
+}
+
+// RecordTripCreated mocks base method.
+func (m *MockbusinessMetrics) RecordTripCreated(ctx context.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "RecordTripCreated", ctx)
+}
+
+// RecordTripCreated indicates an expected call of RecordTripCreated.
+func (mr *MockbusinessMetricsMockRecorder) RecordTripCreated(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordTripCreated", reflect.TypeOf((*MockbusinessMetrics)(nil).RecordTripCreated), ctx)
+}

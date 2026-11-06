@@ -10,33 +10,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
 	"github.com/cench-dev/avito-labs/internal/model"
 )
-
-type tripFinisherMock struct {
-	finishFunc func(context.Context, string, time.Time) error
-}
-
-func (m *tripFinisherMock) Finish(
-	ctx context.Context,
-	tripID string,
-	finishedAt time.Time,
-) error {
-	return m.finishFunc(ctx, tripID, finishedAt)
-}
-
-type tripGetterMock struct {
-	getFunc func(context.Context, string) (model.Trip, error)
-}
-
-func (m *tripGetterMock) Get(
-	ctx context.Context,
-	tripID string,
-) (model.Trip, error) {
-	return m.getFunc(ctx, tripID)
-}
 
 func TestHandler_Handle(t *testing.T) {
 	tripID := uuid.New()
@@ -75,13 +53,13 @@ func TestHandler_Handle(t *testing.T) {
 			name:            "trip already completed",
 			finishErr:       tripDomain.ErrAlreadyCompleted,
 			wantStatus:      http.StatusConflict,
-			wantBodyContent: "trip_already_completed",
+			wantBodyContent: "trip_completed",
 		},
 		{
 			name:            "trip not found",
 			finishErr:       tripDomain.ErrNotFound,
 			wantStatus:      http.StatusNotFound,
-			wantBodyContent: "not_found",
+			wantBodyContent: "trip_not_found",
 		},
 		{
 			name:            "internal error",
@@ -101,10 +79,14 @@ func TestHandler_Handle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			getCalled := false
+			ctrl := gomock.NewController(t)
 
-			finisher := &tripFinisherMock{
-				finishFunc: func(
+			finisher := NewMockTripFinisher(ctrl)
+			getter := NewMockTripGetter(ctrl)
+
+			finisher.EXPECT().
+				Finish(gomock.Any(), tripID.String(), gomock.Any()).
+				DoAndReturn(func(
 					_ context.Context,
 					gotTripID string,
 					finishedAt time.Time,
@@ -116,38 +98,49 @@ func TestHandler_Handle(t *testing.T) {
 						t.Error("Finish() received zero finishedAt")
 					}
 					return tt.finishErr
-				},
-			}
+				}).
+				Times(1)
 
-			getter := &tripGetterMock{
-				getFunc: func(
-					_ context.Context,
-					gotTripID string,
-				) (model.Trip, error) {
-					getCalled = true
-					if gotTripID != tripID.String() {
-						t.Errorf("Get() tripID = %q, want %q", gotTripID, tripID.String())
-					}
-					return tt.trip, tt.getErr
-				},
+			if tt.wantGetCalled {
+				getter.EXPECT().
+					Get(gomock.Any(), tripID.String()).
+					DoAndReturn(func(
+						_ context.Context,
+						gotTripID string,
+					) (model.Trip, error) {
+						if gotTripID != tripID.String() {
+							t.Errorf("Get() tripID = %q, want %q", gotTripID, tripID.String())
+						}
+						return tt.trip, tt.getErr
+					}).
+					Times(1)
 			}
 
 			handler := NewHandler(finisher, getter)
-			req := httptest.NewRequest(http.MethodPost, "/trips/"+tripID.String()+"/finish", nil)
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/trips/"+tripID.String()+"/finish",
+				nil,
+			)
 			rec := httptest.NewRecorder()
 
 			handler.Handle(rec, req, tripID)
 
 			if rec.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body.String())
+				t.Fatalf(
+					"status = %d, want %d; body: %s",
+					rec.Code,
+					tt.wantStatus,
+					rec.Body.String(),
+				)
 			}
 
 			if !strings.Contains(rec.Body.String(), tt.wantBodyContent) {
-				t.Errorf("response body %q does not contain %q", rec.Body.String(), tt.wantBodyContent)
-			}
-
-			if getCalled != tt.wantGetCalled {
-				t.Errorf("getter called = %v, want %v", getCalled, tt.wantGetCalled)
+				t.Errorf(
+					"response body %q does not contain %q",
+					rec.Body.String(),
+					tt.wantBodyContent,
+				)
 			}
 
 			if tt.wantStatus == http.StatusInternalServerError &&

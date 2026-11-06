@@ -4,18 +4,19 @@ import (
 	"context"
 
 	"github.com/cench-dev/avito-labs/internal/model"
-	"github.com/cench-dev/avito-labs/internal/observability"
 )
 
 type UseCase struct {
 	tripRepository tripRepository
 	txManager      txManager
+	metrics        businessMetrics
 }
 
-func NewUseCase(repo tripRepository, manager txManager) *UseCase {
+func NewUseCase(repo tripRepository, manager txManager, metrics businessMetrics) *UseCase {
 	return &UseCase{
 		tripRepository: repo,
 		txManager:      manager,
+		metrics:        metrics,
 	}
 }
 
@@ -41,6 +42,9 @@ func (uc *UseCase) Create(ctx context.Context, trip model.Trip) error {
 		return res
 	}
 
-	observability.RecordTripCreated(ctx)
+	if uc.metrics != nil {
+		uc.metrics.RecordTripCreated(ctx)
+	}
+
 	return nil
 }

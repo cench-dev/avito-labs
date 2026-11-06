@@ -23,13 +23,13 @@ func TestWrite(t *testing.T) {
 			name:       "trip not found",
 			err:        tripDomain.ErrNotFound,
 			wantStatus: http.StatusNotFound,
-			wantCode:   "not_found",
+			wantCode:   "trip_not_found",
 		},
 		{
 			name:       "trip already completed",
 			err:        tripDomain.ErrAlreadyCompleted,
 			wantStatus: http.StatusConflict,
-			wantCode:   "trip_already_completed",
+			wantCode:   "trip_completed",
 		},
 		{
 			name:       "driver busy",

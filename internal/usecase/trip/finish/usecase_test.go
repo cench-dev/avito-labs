@@ -18,9 +18,7 @@ func TestUseCase_Finish(t *testing.T) {
 		historyErr error
 		wantErr    string
 	}{
-		{
-			name: "success",
-		},
+		{name: "success"},
 		{
 			name:      "finish repository error",
 			finishErr: errors.New("finish failed"),
@@ -38,6 +36,7 @@ func TestUseCase_Finish(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			repo := NewMocktripRepository(ctrl)
 			tx := NewMocktxManager(ctrl)
+			metrics := NewMockbusinessMetrics(ctrl)
 
 			finishedAt := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
 
@@ -46,6 +45,13 @@ func TestUseCase_Finish(t *testing.T) {
 				DoAndReturn(func(ctx context.Context, fn func(context.Context) error) error {
 					return fn(ctx)
 				})
+
+			repo.EXPECT().
+				GetTrip(gomock.Any(), "trip-1").
+				Return(model.Trip{
+					ID:     "trip-1",
+					Status: "active",
+				}, nil)
 
 			repo.EXPECT().
 				FinishTrip(gomock.Any(), "trip-1", finishedAt).
@@ -64,7 +70,17 @@ func TestUseCase_Finish(t *testing.T) {
 					Return(tt.historyErr)
 			}
 
-			err := NewUseCase(repo, tx).Finish(
+			if tt.wantErr == "" {
+				metrics.EXPECT().
+					RecordTripCompleted(gomock.Any()).
+					Times(1)
+			} else {
+				metrics.EXPECT().
+					RecordTripCompleted(gomock.Any()).
+					Times(0)
+			}
+
+			err := NewUseCase(repo, tx, metrics).Finish(
 				context.Background(),
 				"trip-1",
 				finishedAt,

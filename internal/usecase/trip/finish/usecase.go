@@ -6,33 +6,48 @@ import (
 
 	tripDomain "github.com/cench-dev/avito-labs/internal/domain/trip"
 	"github.com/cench-dev/avito-labs/internal/model"
-	"github.com/cench-dev/avito-labs/internal/observability"
 )
 
 type UseCase struct {
 	tripRepository tripRepository
 	txManager      txManager
+	metrics        businessMetrics
 }
 
-func NewUseCase(repo tripRepository, manager txManager) *UseCase {
+func NewUseCase(repo tripRepository, manager txManager, metrics businessMetrics) *UseCase {
 	return &UseCase{
 		tripRepository: repo,
 		txManager:      manager,
+		metrics:        metrics,
 	}
 }
 
 func (uc *UseCase) Finish(ctx context.Context, tripID string, finishedAt time.Time) error {
 	res := uc.txManager.Do(ctx, func(ctx context.Context) error {
+		tripModel, err := uc.tripRepository.GetTrip(ctx, tripID)
+		if err != nil {
+			return err
+		}
+
+		domainTrip := tripDomain.Trip{
+			Status:     tripDomain.Status(tripModel.Status),
+			FinishedAt: tripModel.FinishedAt,
+		}
+
+		fromStatus := string(domainTrip.Status)
+
+		if err := domainTrip.Finish(finishedAt); err != nil {
+			return err
+		}
+
 		if err := uc.tripRepository.FinishTrip(ctx, tripID, finishedAt); err != nil {
 			return err
 		}
 
-		fromStatus := string(tripDomain.StatusActive)
-
 		tripStatusHistory := model.TripStatusHistory{
 			TripID:     tripID,
 			FromStatus: &fromStatus,
-			ToStatus:   string(tripDomain.StatusCompleted),
+			ToStatus:   string(domainTrip.Status),
 			Reason:     nil,
 		}
 
@@ -47,6 +62,9 @@ func (uc *UseCase) Finish(ctx context.Context, tripID string, finishedAt time.Ti
 		return res
 	}
 
-	observability.RecordTripCompleted(ctx)
+	if uc.metrics != nil {
+		uc.metrics.RecordTripCompleted(ctx)
+	}
+
 	return nil
 }
