@@ -1,13 +1,12 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	api "github.com/cench-dev/avito-labs/internal/generated"
@@ -15,9 +14,6 @@ import (
 	"github.com/cench-dev/avito-labs/internal/txmanager"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
@@ -51,7 +47,19 @@ func NewServer(httpAddress string, shutdownTimeout time.Duration,
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       idleTimeout,
 	}
-	api.HandlerFromMux(server, r)
+	api.HandlerWithOptions(server, api.ChiServerOptions{
+		BaseRouter: r,
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			writeProblem(
+				w,
+				r,
+				http.StatusBadRequest,
+				"invalid_request",
+				"Invalid request",
+				err.Error(),
+			)
+		},
+	})
 
 	return server
 }
@@ -60,19 +68,13 @@ func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
 }
 
-func (s *Server) Shutdown() error {
-	ctx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
-	defer cancel()
-	return s.httpServer.Shutdown(ctx)
-}
-
-func (s *Server) WaitForShutdown() error {
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigs)
-	<-sigs
-	err := s.Shutdown()
+func (s *Server) Shutdown(ctx context.Context) error {
+	err := s.httpServer.Shutdown(ctx)
 	if err != nil {
+		closeErr := s.httpServer.Close()
+		if closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
 		return err
 	}
 
@@ -124,11 +126,51 @@ func writeProblem(w http.ResponseWriter, r *http.Request, status int, code strin
 }
 
 func (s *Server) CreateTrip(w http.ResponseWriter, r *http.Request, params api.CreateTripParams) {
-	var data api.TripData
 
-	err := json.NewDecoder(r.Body).Decode(&data)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Bad Request", "invalid request body")
+		return
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Bad Request", "invalid request body")
+		return
+	}
+
+	requiredFields := []string{
+		"user_id",
+		"driver_id",
+		"start_point",
+		"end_point",
+		"price",
+	}
+
+	for _, field := range requiredFields {
+		value, exists := fields[field]
+		if !exists || string(value) == "null" {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Bad Request", "missing required field: "+field)
+			return
+		}
+	}
+
+	var data api.TripData
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&data); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Bad Request", "invalid request body")
+		return
+	}
+
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Bad Request", "request body must contain exactly one JSON object")
+		return
+	}
+
+	if data.UserId == uuid.Nil || data.DriverId == uuid.Nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Bad Request", "user_id and driver_id are required")
 		return
 	}
 
@@ -141,12 +183,29 @@ func (s *Server) CreateTrip(w http.ResponseWriter, r *http.Request, params api.C
 		return
 	}
 
+	for _, field := range []string{"start_point", "end_point"} {
+		var coordinates map[string]json.RawMessage
+
+		if err := json.Unmarshal(fields[field], &coordinates); err != nil {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Bad Request", "invalid coordinates")
+			return
+		}
+
+		for _, coordinate := range []string{"latitude", "longitude"} {
+			value, exists := coordinates[coordinate]
+			if !exists || string(value) == "null" {
+				writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Bad Request", "missing required coordinate: "+coordinate)
+				return
+			}
+		}
+	}
+
 	tripID := uuid.New()
 	startedAt := time.Now()
 	tripParams := repository.CreateTripParams{
-		ID:             pgtype.UUID{Bytes: tripID, Valid: true},
-		UserID:         pgtype.UUID{Bytes: data.UserId, Valid: true},
-		DriverID:       pgtype.UUID{Bytes: data.DriverId, Valid: true},
+		ID:             tripID,
+		UserID:         data.UserId,
+		DriverID:       data.DriverId,
 		StartLatitude:  data.StartPoint.Latitude,
 		StartLongitude: data.StartPoint.Longitude,
 		EndLatitude:    data.EndPoint.Latitude,
@@ -168,11 +227,8 @@ func (s *Server) CreateTrip(w http.ResponseWriter, r *http.Request, params api.C
 	})
 
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) &&
-			pgErr.Code == "23505" &&
-			pgErr.ConstraintName == "trips_limitation_for_driver_idx" {
-			writeProblem(w, r, http.StatusConflict, "driver_busy", "Conflict", "driver already has an active trip")
+		if errors.Is(err, repository.ErrDriverBusy) {
+			writeProblem(w, r, http.StatusConflict, "driver_busy", "Driver is busy", "")
 			return
 		}
 
@@ -200,14 +256,10 @@ func (s *Server) CreateTrip(w http.ResponseWriter, r *http.Request, params api.C
 }
 
 func (s *Server) GetTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
-	id := pgtype.UUID{
-		Bytes: tripId,
-		Valid: true,
-	}
 
-	trip, err := s.tripRepository.GetTrip(r.Context(), id)
+	trip, err := s.tripRepository.GetTrip(r.Context(), tripId)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, repository.ErrTripNotFound) {
 			writeProblem(w, r, http.StatusNotFound, "trip_not_found", "Not Found", "trip not found")
 			return
 		}
@@ -223,14 +275,9 @@ func (s *Server) GetTrip(w http.ResponseWriter, r *http.Request, tripId api.Trip
 }
 
 func (s *Server) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
-	id := pgtype.UUID{
-		Bytes: tripId,
-		Valid: true,
-	}
-
 	finishedAt := time.Now()
 	err := s.txManager.Do(r.Context(), func(ctx context.Context) error {
-		if err := s.tripRepository.FinishTrip(ctx, id, finishedAt); err != nil {
+		if err := s.tripRepository.FinishTrip(ctx, tripId, finishedAt); err != nil {
 			return err
 		}
 
@@ -239,7 +286,7 @@ func (s *Server) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.T
 		return s.tripRepository.CreateTripStatusHistory(
 			ctx,
 			repository.CreateTripStatusHistoryParams{
-				TripID:     id,
+				TripID:     tripId,
 				FromStatus: &fromStatus,
 				ToStatus:   "completed",
 			},
@@ -247,7 +294,7 @@ func (s *Server) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.T
 	})
 
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, repository.ErrTripNotFound) {
 			writeProblem(w, r, http.StatusNotFound, "trip_not_found", "Not Found", "trip not found")
 			return
 		}
@@ -261,7 +308,7 @@ func (s *Server) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.T
 		return
 	}
 
-	trip, err := s.tripRepository.GetTrip(r.Context(), id)
+	trip, err := s.tripRepository.GetTrip(r.Context(), tripId)
 	if err != nil {
 		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal Server Error", "failed to get finished trip")
 		return

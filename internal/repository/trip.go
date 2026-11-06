@@ -5,10 +5,13 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/Masterminds/squirrel"
 	api "github.com/cench-dev/avito-labs/internal/generated"
 	"github.com/cench-dev/avito-labs/internal/txmanager"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -19,12 +22,16 @@ type TripRepository struct {
 	queryTimeout time.Duration
 }
 
-var ErrTripAlreadyCompleted = errors.New("trip already completed")
+var (
+	ErrTripAlreadyCompleted = errors.New("trip already completed")
+	ErrTripNotFound         = errors.New("trip not found")
+	ErrDriverBusy           = errors.New("driver is busy")
+)
 
 type CreateTripParams struct {
-	ID             pgtype.UUID
-	UserID         pgtype.UUID
-	DriverID       pgtype.UUID
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	DriverID       uuid.UUID
 	StartLatitude  float64
 	StartLongitude float64
 	EndLatitude    float64
@@ -35,7 +42,7 @@ type CreateTripParams struct {
 }
 
 type CreateTripStatusHistoryParams struct {
-	TripID     pgtype.UUID
+	TripID     uuid.UUID
 	FromStatus *string
 	ToStatus   string
 	Reason     *string
@@ -64,10 +71,13 @@ func (r *TripRepository) CreateTrip(ctx context.Context, params CreateTripParams
 		"status",
 		"started_at",
 	)
+	id := pgtype.UUID{Bytes: params.ID, Valid: true}
+	userID := pgtype.UUID{Bytes: params.UserID, Valid: true}
+	driverID := pgtype.UUID{Bytes: params.DriverID, Valid: true}
 	builder = builder.Values(
-		params.ID,
-		params.UserID,
-		params.DriverID,
+		id,
+		userID,
+		driverID,
 		params.StartLatitude,
 		params.StartLongitude,
 		params.EndLatitude,
@@ -84,11 +94,22 @@ func (r *TripRepository) CreateTrip(ctx context.Context, params CreateTripParams
 
 	executor := txmanager.ExecutorFromContext(ctx, r.pool)
 	_, err = executor.Exec(ctx, query, args...)
-	return err
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == "23505" &&
+			pgErr.ConstraintName == "trips_limitation_for_driver_idx" {
+			return ErrDriverBusy
+		}
+		return err
+	}
+
+	return nil
 }
 
-func (r *TripRepository) GetTrip(ctx context.Context, id pgtype.UUID) (api.Trip, error) {
+func (r *TripRepository) GetTrip(ctx context.Context, id uuid.UUID) (api.Trip, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	dbID := pgtype.UUID{Bytes: id, Valid: true}
 	defer cancel()
 	builder := squirrel.Select(
 		"id",
@@ -104,7 +125,7 @@ func (r *TripRepository) GetTrip(ctx context.Context, id pgtype.UUID) (api.Trip,
 		"finished_at",
 	).From("trips")
 
-	builder = builder.Where(squirrel.Eq{"id": id})
+	builder = builder.Where(squirrel.Eq{"id": dbID})
 	builder = builder.PlaceholderFormat(squirrel.Dollar)
 	query, args, err := builder.ToSql()
 	if err != nil {
@@ -144,8 +165,9 @@ func (r *TripRepository) GetTrip(ctx context.Context, id pgtype.UUID) (api.Trip,
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return api.Trip{}, pgx.ErrNoRows
+			return api.Trip{}, ErrTripNotFound
 		}
+
 		return api.Trip{}, err
 	}
 
@@ -168,14 +190,15 @@ func (r *TripRepository) GetTrip(ctx context.Context, id pgtype.UUID) (api.Trip,
 	}, nil
 }
 
-func (r *TripRepository) FinishTrip(ctx context.Context, id pgtype.UUID, finishedAt time.Time) error {
+func (r *TripRepository) FinishTrip(ctx context.Context, id uuid.UUID, finishedAt time.Time) error {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	dbID := pgtype.UUID{Bytes: id, Valid: true}
 	defer cancel()
 	builder := squirrel.Update("trips")
 	builder = builder.Set("status", "completed")
 	builder = builder.Set("finished_at", finishedAt)
 	builder = builder.Where(squirrel.Eq{
-		"id":     id,
+		"id":     dbID,
 		"status": "active",
 	})
 	builder = builder.PlaceholderFormat(squirrel.Dollar)
@@ -200,11 +223,11 @@ func (r *TripRepository) FinishTrip(ctx context.Context, id pgtype.UUID, finishe
 		err := executor.QueryRow(
 			ctx,
 			"SELECT status FROM trips WHERE id = $1",
-			id,
+			dbID,
 		).Scan(&status)
 
 		if errors.Is(err, pgx.ErrNoRows) {
-			return pgx.ErrNoRows
+			return ErrTripNotFound
 		}
 
 		if err != nil {
@@ -215,7 +238,7 @@ func (r *TripRepository) FinishTrip(ctx context.Context, id pgtype.UUID, finishe
 			return ErrTripAlreadyCompleted
 		}
 
-		return pgx.ErrNoRows
+		return ErrTripNotFound
 	}
 
 	return nil
@@ -223,6 +246,7 @@ func (r *TripRepository) FinishTrip(ctx context.Context, id pgtype.UUID, finishe
 
 func (r *TripRepository) CreateTripStatusHistory(ctx context.Context, params CreateTripStatusHistoryParams) error {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	tripID := pgtype.UUID{Bytes: params.TripID, Valid: true}
 	defer cancel()
 	builder := squirrel.Insert("trip_status_history")
 	builder = builder.Columns(
@@ -232,7 +256,7 @@ func (r *TripRepository) CreateTripStatusHistory(ctx context.Context, params Cre
 		"reason",
 	)
 	builder = builder.Values(
-		params.TripID,
+		tripID,
 		params.FromStatus,
 		params.ToStatus,
 		params.Reason,
