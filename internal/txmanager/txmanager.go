@@ -40,12 +40,14 @@ func (tm *txManager) Do(ctx context.Context, fn func(ctx context.Context) error)
 	tx, err := tm.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel: pgx.ReadCommitted,
 	})
-
 	if err != nil {
 		return err
 	}
 
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
 	ctx = context.WithValue(ctx, txKey{}, tx)
 
 	if fn != nil {

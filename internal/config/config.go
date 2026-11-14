@@ -17,6 +17,9 @@ type Config struct {
 	DatabaseMaxConnLifetime time.Duration
 	DatabaseConnectTimeout  time.Duration
 	DatabaseQueryTimeout    time.Duration
+	OTLPEndpoint            string
+	OTLPProtocol            string
+	TracesSampler           string
 }
 
 func Load() (Config, error) {
@@ -65,6 +68,18 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	otlpEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+	otlpProtocol := os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")
+	if otlpProtocol == "" {
+		otlpProtocol = "grpc"
+	}
+
+	tracesSampler := os.Getenv("OTEL_TRACES_SAMPLER")
+	if tracesSampler == "" {
+		tracesSampler = "parentbased_always_on"
+	}
+
 	return Config{
 		HTTPAddr:                httpAddress,
 		LogLevel:                logLevel,
@@ -75,6 +90,9 @@ func Load() (Config, error) {
 		DatabaseMaxConnLifetime: databaseMaxConnLifetime,
 		DatabaseConnectTimeout:  databaseConnectTimeout,
 		DatabaseQueryTimeout:    databaseQueryTimeout,
+		OTLPEndpoint:            otlpEndpoint,
+		OTLPProtocol:            otlpProtocol,
+		TracesSampler:           tracesSampler,
 	}, nil
 }
 
@@ -94,7 +112,6 @@ func requiredInt(param string) (int32, error) {
 	}
 
 	result, err := strconv.ParseInt(value, 10, 32)
-
 	if err != nil {
 		return 0, fmt.Errorf("%s must be int: %w", param, err)
 	}
