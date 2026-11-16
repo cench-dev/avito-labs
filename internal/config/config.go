@@ -20,6 +20,13 @@ type Config struct {
 	OTLPEndpoint            string
 	OTLPProtocol            string
 	TracesSampler           string
+	PositionCheckInterval   time.Duration
+	PositionStaleAfter      time.Duration
+	PositionWorkers         int
+	PositionQueueSize       int
+	PushHTTPURL             string
+	PushAdminURL            string
+	PushRequestTimeout      time.Duration
 }
 
 func Load() (Config, error) {
@@ -80,6 +87,34 @@ func Load() (Config, error) {
 		tracesSampler = "parentbased_always_on"
 	}
 
+	positionCheckInterval, err := getEnvTime("POSITION_CHECK_INTERVAL", 30*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	positionStaleAfter, err := getEnvTime("POSITION_STALE_AFTER", 60*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	positionWorkers, err := getEnvInt("POSITION_WORKERS", 4)
+	if err != nil {
+		return Config{}, err
+	}
+
+	positionQueueSize, err := getEnvInt("POSITION_QUEUE_SIZE", 100)
+	if err != nil {
+		return Config{}, err
+	}
+
+	pushRequestTimeout, err := getEnvTime("PUSH_REQUEST_TIMEOUT", time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	pushHTTPURL := getEnvString("PUSH_HTTP_URL", "http://localhost:8090")
+	pushAdminURL := getEnvString("PUSH_ADMIN_URL", "http://localhost:8091")
+
 	return Config{
 		HTTPAddr:                httpAddress,
 		LogLevel:                logLevel,
@@ -93,6 +128,13 @@ func Load() (Config, error) {
 		OTLPEndpoint:            otlpEndpoint,
 		OTLPProtocol:            otlpProtocol,
 		TracesSampler:           tracesSampler,
+		PositionCheckInterval:   positionCheckInterval,
+		PositionStaleAfter:      positionStaleAfter,
+		PositionWorkers:         positionWorkers,
+		PositionQueueSize:       positionQueueSize,
+		PushRequestTimeout:      pushRequestTimeout,
+		PushHTTPURL:             pushHTTPURL,
+		PushAdminURL:            pushAdminURL,
 	}, nil
 }
 
@@ -131,4 +173,41 @@ func requiredTime(param string) (time.Duration, error) {
 	}
 
 	return result, nil
+}
+
+func getEnvTime(param string, defaultValue time.Duration) (time.Duration, error) {
+	value := os.Getenv(param)
+	if value == "" {
+		return defaultValue, nil
+	}
+
+	result, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be time: %w", param, err)
+	}
+
+	return result, nil
+}
+
+func getEnvInt(param string, defaultValue int) (int, error) {
+	value := os.Getenv(param)
+	if value == "" {
+		return defaultValue, nil
+	}
+
+	result, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be int: %w", param, err)
+	}
+
+	return result, nil
+}
+
+func getEnvString(param, defaultValue string) string {
+	value := os.Getenv(param)
+	if value == "" {
+		return defaultValue
+	}
+
+	return value
 }

@@ -5,9 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/Masterminds/squirrel"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -266,5 +265,69 @@ func (r *TripRepository) CreateTripStatusHistory(ctx context.Context, params mod
 
 	executor := txmanager.ExecutorFromContext(ctx, r.pool)
 	_, err = executor.Exec(ctx, query, args...)
+	return err
+}
+
+func (r *TripRepository) LockActiveTrip(ctx context.Context, id string) error {
+	parsedID, err := uuid.Parse(id)
+	if err != nil {
+		return err
+	}
+
+	dbID := pgtype.UUID{Bytes: parsedID, Valid: true}
+
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
+	executor := txmanager.ExecutorFromContext(ctx, r.pool)
+
+	var status string
+	err = executor.QueryRow(ctx, `
+		SELECT status
+		FROM trips
+		WHERE id = $1
+		FOR UPDATE
+	`, dbID).Scan(&status)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return tripDomain.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	if status == string(tripDomain.StatusCompleted) {
+		return tripDomain.ErrAlreadyCompleted
+	}
+
+	return nil
+}
+
+func (r *TripRepository) UpdateLastPositionAt(
+	ctx context.Context,
+	tripID string,
+	recordedAt time.Time,
+) error {
+	parsedID, err := uuid.Parse(tripID)
+	if err != nil {
+		return err
+	}
+
+	dbID := pgtype.UUID{Bytes: parsedID, Valid: true}
+
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
+	executor := txmanager.ExecutorFromContext(ctx, r.pool)
+
+	_, err = executor.Exec(ctx, `
+		UPDATE trips
+		SET last_position_at = GREATEST(
+			COALESCE(last_position_at, $2),
+			$2
+		)
+		WHERE id = $1
+	`, dbID, recordedAt)
+
 	return err
 }

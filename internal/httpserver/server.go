@@ -8,31 +8,31 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cench-dev/avito-labs/internal/http/domainerror"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/trace"
 
 	api "github.com/cench-dev/avito-labs/internal/generated"
+	"github.com/cench-dev/avito-labs/internal/http/domainerror"
 	tripCreate "github.com/cench-dev/avito-labs/internal/http/trip/create"
 	tripFinish "github.com/cench-dev/avito-labs/internal/http/trip/finish"
 	tripGet "github.com/cench-dev/avito-labs/internal/http/trip/get"
+	tripPositions "github.com/cench-dev/avito-labs/internal/http/trip/positions"
 )
 
 type Server struct {
-	httpServer      *http.Server
-	shutdownTimeout time.Duration
-	pool            *pgxpool.Pool
+	httpServer *http.Server
+	pool       *pgxpool.Pool
 	api.Unimplemented
 	createTripHandler *tripCreate.Handler
 	getTripHandler    *tripGet.Handler
 	finishTripHandler *tripFinish.Handler
+	positionsHandler  *tripPositions.Handler
 }
 
 func NewServer(
 	httpAddress string,
-	shutdownTimeout time.Duration,
 	readTimeout time.Duration,
 	readHeaderTimeout time.Duration,
 	writeTimeout time.Duration,
@@ -43,6 +43,7 @@ func NewServer(
 	finishTripHandler *tripFinish.Handler,
 	requestMetrics RequestMetricsRecorder,
 	logger *slog.Logger,
+	positionsHandler *tripPositions.Handler,
 ) *Server {
 	r := chi.NewRouter()
 
@@ -66,11 +67,11 @@ func NewServer(
 	r.Use(RequestMetrics(requestMetrics))
 
 	server := &Server{
-		shutdownTimeout:   shutdownTimeout,
 		pool:              pool,
 		createTripHandler: createTripHandler,
 		getTripHandler:    getTripHandler,
 		finishTripHandler: finishTripHandler,
+		positionsHandler:  positionsHandler,
 	}
 
 	server.httpServer = &http.Server{
@@ -150,4 +151,12 @@ func (s *Server) GetTrip(w http.ResponseWriter, r *http.Request, tripId api.Trip
 
 func (s *Server) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
 	s.finishTripHandler.Handle(w, r, tripId)
+}
+
+func (s *Server) ListTripPositions(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
+	s.positionsHandler.List(w, r, tripId)
+}
+
+func (s *Server) CreateTripPosition(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
+	s.positionsHandler.Create(w, r, tripId)
 }
