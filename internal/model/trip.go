@@ -24,3 +24,12 @@ type TripStatusHistory struct {
 	ToStatus   string
 	Reason     *string
 }
+
+type TripPosition struct {
+	ID         int64
+	TripID     string
+	Latitude   float64
+	Longitude  float64
+	RecordedAt time.Time
+	CreatedAt  time.Time
+}

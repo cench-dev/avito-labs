@@ -277,3 +277,76 @@ func TestTripRepository_CreateTripStatusHistoryForeignKeyError(t *testing.T) {
 		t.Fatal("CreateTripStatusHistory() error = nil, want foreign key violation")
 	}
 }
+
+func TestTripRepository_GetStaleActiveTrips(t *testing.T) {
+	repo, pool := newTripRepositoryIntegration(t)
+	ctx := context.Background()
+
+	oldDriverID := uuid.NewString()
+	newDriverID := uuid.NewString()
+	freshDriverID := uuid.NewString()
+
+	oldTripWithoutPositions := newIntegrationTrip(oldDriverID)
+	oldTripWithoutPositions.StartedAt = time.Now().UTC().Add(-10 * time.Minute)
+
+	oldTripWithPositions := newIntegrationTrip(newDriverID)
+	oldTripWithPositions.StartedAt = time.Now().UTC().Add(-20 * time.Minute)
+
+	freshTrip := newIntegrationTrip(freshDriverID)
+	freshTrip.StartedAt = time.Now().UTC()
+
+	cleanupIntegrationTrip(
+		t,
+		pool,
+		oldTripWithoutPositions.ID,
+		oldTripWithPositions.ID,
+		freshTrip.ID,
+	)
+
+	for _, trip := range []model.Trip{
+		oldTripWithoutPositions,
+		oldTripWithPositions,
+		freshTrip,
+	} {
+		if err := repo.CreateTrip(ctx, trip); err != nil {
+			t.Fatalf("CreateTrip(%s) error = %v", trip.ID, err)
+		}
+	}
+
+	oldPositionAt := time.Now().UTC().Add(-15 * time.Minute)
+	if _, err := pool.Exec(ctx, `
+		UPDATE trips
+		SET last_position_at = $2
+		WHERE id = $1
+	`, oldTripWithPositions.ID, oldPositionAt); err != nil {
+		t.Fatalf("update last_position_at: %v", err)
+	}
+
+	got, err := repo.GetStaleActiveTrips(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("GetStaleActiveTrips() error = %v", err)
+	}
+
+	gotByID := make(map[string]StaleTrip, len(got))
+	for _, trip := range got {
+		gotByID[trip.ID] = trip
+	}
+
+	for _, want := range []StaleTrip{
+		{ID: oldTripWithPositions.ID, DriverID: newDriverID},
+		{ID: oldTripWithoutPositions.ID, DriverID: oldDriverID},
+	} {
+		gotTrip, ok := gotByID[want.ID]
+		if !ok {
+			t.Errorf("stale trip %s not found", want.ID)
+			continue
+		}
+		if gotTrip.DriverID != want.DriverID {
+			t.Errorf("trip %s driver ID = %q, want %q", want.ID, gotTrip.DriverID, want.DriverID)
+		}
+	}
+
+	if _, ok := gotByID[freshTrip.ID]; ok {
+		t.Errorf("fresh trip %s unexpectedly returned as stale", freshTrip.ID)
+	}
+}

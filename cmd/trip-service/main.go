@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/cench-dev/avito-labs/internal/config"
+	"github.com/cench-dev/avito-labs/internal/gateway/push"
 	tripCreate "github.com/cench-dev/avito-labs/internal/http/trip/create"
 	tripFinish "github.com/cench-dev/avito-labs/internal/http/trip/finish"
 	tripGet "github.com/cench-dev/avito-labs/internal/http/trip/get"
+	tripPositions "github.com/cench-dev/avito-labs/internal/http/trip/positions"
 	"github.com/cench-dev/avito-labs/internal/httpserver"
 	"github.com/cench-dev/avito-labs/internal/observability"
 	"github.com/cench-dev/avito-labs/internal/postgres"
@@ -22,6 +24,8 @@ import (
 	"github.com/cench-dev/avito-labs/internal/usecase/trip/create"
 	"github.com/cench-dev/avito-labs/internal/usecase/trip/finish"
 	"github.com/cench-dev/avito-labs/internal/usecase/trip/get"
+	positionsUseCase "github.com/cench-dev/avito-labs/internal/usecase/trip/positions"
+	positionsWorker "github.com/cench-dev/avito-labs/internal/worker/positions"
 )
 
 func main() {
@@ -70,6 +74,12 @@ func main() {
 		return
 	}
 
+	positionMetrics, err := observability.NewPositionMetrics(otel.MeterProvider)
+	if err != nil {
+		logger.Error("failed to create position metrics", "error", err)
+		return
+	}
+
 	pool, err := postgres.CreatePool(
 		context.Background(),
 		cfg.DatabaseURL,
@@ -93,10 +103,32 @@ func main() {
 	createTripHandler := tripCreate.NewHandler(createTripUseCase)
 	getTripHandler := tripGet.NewHandler(getTripUseCase)
 	finishTripHandler := tripFinish.NewHandler(finishTripUseCase, getTripUseCase)
+	positionsUC := positionsUseCase.NewUseCase(tripRepository, txManager, positionMetrics)
+
+	pushClient := push.NewClient(cfg.PushHTTPURL, cfg.PushRequestTimeout)
+
+	worker := positionsWorker.NewWorker(
+		pushClient,
+		cfg.PositionWorkers,
+		cfg.PositionQueueSize,
+		cfg.PushRequestTimeout,
+		positionMetrics,
+		logger,
+	)
+
+	scanner := positionsWorker.NewScanner(
+		tripRepository,
+		worker,
+		cfg.PositionCheckInterval,
+		cfg.PositionStaleAfter,
+		logger,
+		positionMetrics,
+	)
+
+	positionsHandler := tripPositions.NewHandler(positionsUC, worker)
 
 	server := httpserver.NewServer(
 		cfg.HTTPAddr,
-		cfg.ShutdownTimeout,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -107,6 +139,7 @@ func main() {
 		finishTripHandler,
 		httpMetrics,
 		logger,
+		positionsHandler,
 	)
 
 	go func() {
@@ -114,6 +147,22 @@ func main() {
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server failed", "error", err)
 		}
+	}()
+
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+
+	go func() {
+		defer close(workerDone)
+		worker.Run(workerCtx)
+	}()
+
+	scannerCtx, stopScanner := context.WithCancel(context.Background())
+	scannerDone := make(chan struct{})
+
+	go func() {
+		defer close(scannerDone)
+		scanner.Run(scannerCtx)
 	}()
 
 	sigs := make(chan os.Signal, 1)
@@ -125,8 +174,27 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		logger.Error("shutdown failed", "error", err)
+		logger.Error("http server shutdown failed", "error", err)
 	}
+
+	stopScanner()
+
+	select {
+	case <-scannerDone:
+	case <-ctx.Done():
+		logger.Error("scanner shutdown timeout", "error", ctx.Err())
+	}
+
+	worker.SetShutdownContext(ctx)
+	stopWorker()
+
+	select {
+	case <-workerDone:
+	case <-ctx.Done():
+		logger.Error("worker shutdown timeout", "error", ctx.Err())
+	}
+
+	pushClient.Close()
 
 	poolClosed := make(chan struct{})
 
